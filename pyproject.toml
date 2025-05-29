@@ -1,0 +1,9 @@
+[project]
+name = "thinftp"
+version = "0.1.0"
+description = "A very minimal FTP server"
+authors = [{ name = "M.V.Harish Kumar", email="harishtpj@outlook.com" }]
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = []
