@@ -15,7 +15,7 @@ class ThreadedThinFTP(socketserver.ThreadingTCPServer):
 def start_server(config):
     with ThreadedThinFTP((config.bind, config.port), ThinFTP, config) as server:
         server.lgr.success(f"Server is now running at {config.bind}:{config.port}")
-        server.lgr.debug(f"The Credentials are: [username: {config.user}, password: {config.pswd}]")
+        server.lgr.debug(f"The Credentials are: [username: {config.user!r}, password: {config.pswd!r}]")
         server.lgr.success(f"The directory served is: {config.directory}")
         try:
             server.serve_forever()

@@ -1,6 +1,9 @@
 # The main CLI entrypoint for thinFTP Server
 import argparse
 import getpass
+import sys
+import traceback
+
 from thinftp.logger import get_logger
 from thinftp.server import start_server
 
@@ -36,5 +39,14 @@ opts = parser.parse_args()
 opts.pswd = getpass.getpass(f"Set Password for {opts.user}: ")
 opts.lgr = get_logger(debug=opts.debug)
 opts.lgr.info("Welcome to thinFTP server")
-start_server(opts)
+
+try:
+    start_server(opts)
+except Exception as e:
+    if opts.debug:
+        raise
+    else:
+        tb = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+        opts.lgr.critical("Unhandled exception: \n"+ tb)
+        sys.exit(1)
 
