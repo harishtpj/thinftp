@@ -8,6 +8,7 @@ class FileHandler:
     def __init__(self, root_dir):
         self.root_dir = Path(root_dir).resolve()
         self.cur_dir = self.root_dir
+        self.ren_old = None
 
     def resolve_path(self, path):
         if path.startswith('/') or path.startswith('\\'):
@@ -78,4 +79,66 @@ class FileHandler:
             lines.append(f"{perms} 1 user group {size:>8} {mtime} {entry.name}")
         
         return lines
-             
+
+    def read(self, fname, type):
+        mode = 'rb' if type == 'I' else 'r'
+        path = self.resolve_path(fname)
+        with open(path, mode) as f:
+            while True:
+                chunk = f.read(8192)
+                if not chunk:
+                    break
+                if mode == 'r':
+                    yield chunk.replace('\n', '\r\n').encode('ascii')
+                else:
+                    yield chunk
+
+    def size(self, fname):
+        path = self.resolve_path(fname)
+        if not path.is_relative_to(self.root_dir):
+            raise PermissionError('Attempt to move behind root directory')
+        if not path.is_file():
+            raise FileHandlerError(f'Not a file: {fname!r}')
+        return path.stat().st_size
+
+    def delete(self, fname):
+        path = self.resolve_path(fname)
+        if not path.is_relative_to(self.root_dir):
+            raise PermissionError('Attempt to move behind root directory')
+        if not path.is_file():
+            raise FileHandlerError(f'Not a file: {fname!r}')
+        path.unlink()             
+
+    def rmdir(self, path):
+        path = self.resolve_path(path)
+        if path.exists():
+            if path.is_dir():
+                if not path.is_relative_to(self.root_dir):
+                    raise PermissionError('Attempt to move behind root directory')
+                path.rmdir()
+                return
+            raise NotADirectoryError
+        raise FileNotFoundError
+
+    def rename_from(self, old):
+        self.ren_old = self.resolve_path(old)
+        if not self.ren_old.is_relative_to(self.root_dir):
+            self.ren_old = None
+            raise PermissionError('Attempt to move behind root directory')
+        if not self.ren_old.exists():
+            self.ren_old = None
+            raise FileNotFoundError
+            
+    def rename_to(self, new):
+        new = self.resolve_path(new)
+        self.ren_old.rename(new)
+        self.ren_old = None
+    
+    def write(self, fname, data):
+        path = self.resolve_path(fname)
+        if not path.is_relative_to(self.root_dir):
+            raise PermissionError('Attempt to move behind root directory')
+        with open(path, 'wb') as f:
+            for chunk in data:
+                f.write(chunk)
+                    

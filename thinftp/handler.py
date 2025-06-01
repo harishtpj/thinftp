@@ -13,19 +13,22 @@ class ThinFTP(socketserver.BaseRequestHandler):
         resp_map = {
             150: "File status okay; about to open data connection",
             200: "Command {cmd} OK",
+            211: "-{custom}", # Custom ones are specified below
+            214: "-{custom}", # Custom ones are specified below
             220: "Welcome to thinFTP server",
             221: "Goodbye",
             226: "Closing data connection",
             227: "Entering Passive mode ({host},{p1},{p2})",
             230: "User logged in. Proceed",
-            257: '"{path}" created',
+            257: '"{path}" created', # Custom ones are specified below
             331: "Username {user!r} OK. Need Password",
+            350: "Ready for {cmd}",
             501: "Syntax Error in parameters or arguments",
             502: "Command {cmd!r} not Implemented",
-            503: "Bad sequence of commands: {specific}",
+            503: "Requires {cmd} first",
             504: "Command TYPE not implemented for the parameter {arg}",
             530: "Authentication Failed",
-            550: "No such {obj_kind}: {fname}",
+            550: "No such {obj_kind}: {fname}", # Custom ones are specified below
         }
         if msg is None:
             msg = resp_map[sts_code].format(**kwargs)
@@ -40,7 +43,7 @@ class ThinFTP(socketserver.BaseRequestHandler):
         self.fileman = FileHandler(self.server.config.directory)
         self.login_user = ''
         self.logged_in = False
-        self.transfer_mode = 'I'
+        self.transfer_type = 'I'
         self.data_sock = None
         self.data_conn = None
         
@@ -59,7 +62,7 @@ class ThinFTP(socketserver.BaseRequestHandler):
                     self.server.lgr.debug(f"Received command: [{cmd}] from client {self.client_addr()}")
                     verb, _, args = cmd.partition(' ')
 
-                    verb_map = {
+                    self.verb_map = {
                         'USER': self.ftp_user,
                         'PASS': self.ftp_pass,
                         'QUIT': self.ftp_quit,
@@ -70,8 +73,18 @@ class ThinFTP(socketserver.BaseRequestHandler):
                         'MKD': self.ftp_mkd,
                         'PASV': self.ftp_pasv,
                         'LIST': self.ftp_list,
-                        'OPTS': self.ftp_opts,
+                        'OPTS': lambda kind, switch: self.response(200, cmd=verb),
                         'TYPE': self.ftp_type,
+                        'RETR': self.ftp_retr,
+                        'SIZE': self.ftp_size,
+                        'DELE': self.ftp_dele,
+                        'RMD': self.ftp_rmd,
+                        'RNFR': self.ftp_rnfr,
+                        'RNTO': self.ftp_rnto,
+                        'STOR': self.ftp_stor,
+                        'SYST': lambda: self.response(215, 'UNIX Type: L8'),
+                        'FEAT': self.ftp_feat,
+                        'HELP': self.ftp_help
                     }
                     before_login = ('USER', 'PASS', 'QUIT')
 
@@ -82,7 +95,7 @@ class ThinFTP(socketserver.BaseRequestHandler):
                             self.response(530, 'Access Denied')
                             continue
                         
-                        fn = verb_map.get(verb)
+                        fn = self.verb_map.get(verb)
                         if not fn:
                             resp = self.response(502, cmd=verb)
                         else:
@@ -162,7 +175,7 @@ class ThinFTP(socketserver.BaseRequestHandler):
     
     def ftp_list(self, path='.'):
         if not self.data_sock:
-            return self.response(503, 'requires PASV first')
+            return self.response(503, cmd='PASV')
         try:
             lsts = '\r\n'.join(self.fileman.ls(path))
             self.open_data_conn()
@@ -175,16 +188,124 @@ class ThinFTP(socketserver.BaseRequestHandler):
             self.server.lgr.error(f"Attempt by client {self.client_addr()} to violate server: {e}")
             return self.response(550, msg=e)
 
-    def ftp_opts(self, kind, switch):
-        # TODO: Implement OPTS verb
-        return self.response(200, cmd='OPTS')
-
     def ftp_type(self, arg):
         if arg.upper() in ('A', 'I'):
             self.transfer_type = arg.upper()
             return self.response(200, cmd='TYPE')
         return self.response(504, arg=arg)
-        
+
+    def ftp_retr(self, fname):
+        if not self.data_sock:
+            return self.response(503, cmd='PASV')
+        try:
+            self.open_data_conn()
+            self.response(150)
+            self.server.lgr.debug(f"Sending to client {self.client_addr()} via Data conn:")
+            for chunk in self.fileman.read(fname, self.transfer_type):
+                self.data_conn.sendall(chunk)
+            try:
+                self.server.lgr.debug("The file ends as follows: \n" + chunk.decode())
+            except UnboundLocalError:
+                pass
+            self.close_data_conn()
+            return self.response(226)
+        except FileNotFoundError:
+            return self.response(550, obj_kind="File", fname=fname)
+        except PermissionError as e:
+            self.server.lgr.error(f"Attempt by client {self.client_addr()} to violate server: {e}")
+            return self.response(550, msg=e)
+    
+    def ftp_stor(self, fname):
+        if not self.data_sock:
+            return self.response(503, cmd='PASV')
+        try:
+            self.open_data_conn()
+            self.response(150)
+            self.server.lgr.debug(f"Receiving from client {self.client_addr()} via Data conn:")
+            
+            def data_recv():
+                while True:
+                    chunk = self.data_conn.recv(8192)
+                    if not chunk:
+                        break
+                    yield chunk
+            self.fileman.write(fname, data_recv())
+            self.close_data_conn()
+            return self.response(226)
+        except PermissionError as e:
+            self.server.lgr.error(f"Attempt by client {self.client_addr()} to violate server: {e}")
+            return self.response(550, msg=e)
+
+    def ftp_size(self, fname):
+        try:
+            size = self.fileman.size(fname)
+            return self.response(213, msg=size)
+        except PermissionError as e:
+            self.server.lgr.error(f"Attempt by client {self.client_addr()} to violate server: {e}")
+            return self.response(550, msg=e)
+        except FileHandlerError as e:
+            return self.response(550, msg=e)
+
+    def ftp_dele(self, fname):
+        try:
+            self.fileman.delete(fname)
+            return self.response(250, "File deleted")
+        except FileNotFoundError:
+            return self.response(550, obj_kind="File", fname=fname)
+        except PermissionError as e:
+            self.server.lgr.error(f"Attempt by client {self.client_addr()} to violate server: {e}")
+            return self.response(550, msg=e)
+    
+    def ftp_rmd(self, path):
+        try:
+            self.fileman.rmdir(path)
+            return self.response(250, "Directory deleted")
+        except FileNotFoundError:
+            return self.response(550, obj_kind="Directory", fname=path)
+        except PermissionError as e:
+            self.server.lgr.error(f"Attempt by client {self.client_addr()} to violate server: {e}")
+            return self.response(550, msg=e)
+    
+    def ftp_rnfr(self, old):
+        try:
+            self.fileman.rename_from(old)
+            return self.response(350, cmd='RNTO')
+        except FileNotFoundError:
+            return self.response(550, obj_kind="File", fname=old)
+        except PermissionError as e:
+            self.server.lgr.error(f"Attempt by client {self.client_addr()} to violate server: {e}")
+            return self.response(550, msg=e)
+    
+    def ftp_rnto(self, new):
+        if not hasattr(self.fileman, 'ren_old') or not self.fileman.ren_old:
+            return self.response(503, cmd='RNFR')
+        try:
+            self.fileman.rename_to(new)
+            return self.response(250, "File renamed")
+        except FileNotFoundError:
+            return self.response(550, obj_kind="File", fname=new)
+        except PermissionError as e:
+            self.server.lgr.error(f"Attempt by client {self.client_addr()} to violate server: {e}")
+            return self.response(550, msg=e)
+    
+    def ftp_feat(self):
+        features = ('PASV', 'SIZE', 'UTF8')
+        self.response(211, custom='Features')
+        for feat in features:
+            self.request.sendall(f" {feat}\r\n".encode())
+        self.response(211, msg="End")
+    
+    def ftp_help(self, *args):
+        if args:
+            cmd = args[0].upper()
+            return self.response(214, f"No Detailed help available for {cmd}")
+        cmds = sorted(self.verb_map.keys())
+        cmd_ln = [cmds[i:i+8] for i in range(0, len(cmds), 8)]
+        self.response(214, custom='The following commands are implemented')
+        for ln in cmd_ln:
+            self.request.sendall(f" {' '.join(ln)}\r\n".encode())
+        return self.response(214, "Help OK")
+                         
     def ftp_quit(self):
         self.response(221)
         raise ClientQuit
