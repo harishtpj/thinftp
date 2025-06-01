@@ -12,17 +12,18 @@ class ThinFTP(socketserver.BaseRequestHandler):
     def response(self, sts_code, msg=None, **kwargs):
         resp_map = {
             150: "File status okay; about to open data connection",
-            200: "Command {cmd!r} OK",
+            200: "Command {cmd} OK",
             220: "Welcome to thinFTP server",
             221: "Goodbye",
             226: "Closing data connection",
             227: "Entering Passive mode ({host},{p1},{p2})",
             230: "User logged in. Proceed",
-            257: "{path!r} created",
+            257: '"{path}" created',
             331: "Username {user!r} OK. Need Password",
             501: "Syntax Error in parameters or arguments",
             502: "Command {cmd!r} not Implemented",
             503: "Bad sequence of commands: {specific}",
+            504: "Command TYPE not implemented for the parameter {arg}",
             530: "Authentication Failed",
             550: "No such {obj_kind}: {fname}",
         }
@@ -39,6 +40,7 @@ class ThinFTP(socketserver.BaseRequestHandler):
         self.fileman = FileHandler(self.server.config.directory)
         self.login_user = ''
         self.logged_in = False
+        self.transfer_mode = 'I'
         self.data_sock = None
         self.data_conn = None
         
@@ -68,6 +70,8 @@ class ThinFTP(socketserver.BaseRequestHandler):
                         'MKD': self.ftp_mkd,
                         'PASV': self.ftp_pasv,
                         'LIST': self.ftp_list,
+                        'OPTS': self.ftp_opts,
+                        'TYPE': self.ftp_type,
                     }
                     before_login = ('USER', 'PASS', 'QUIT')
 
@@ -77,9 +81,14 @@ class ThinFTP(socketserver.BaseRequestHandler):
                         if (not self.logged_in) and (verb not in before_login):
                             self.response(530, 'Access Denied')
                             continue
-                        verb_map[verb](*args)
-                    except KeyError:
-                        self.response(502, cmd=verb)
+                        
+                        fn = verb_map.get(verb)
+                        if not fn:
+                            resp = self.response(502, cmd=verb)
+                        else:
+                            resp = fn(*args)
+                            
+                        self.server.lgr.debug(f"Replied {self.client_addr()}: {resp!r}")
                     except TypeError as e:
                         if "missing" in str(e) or "positional" in str(e):
                             self.response(501)
@@ -91,82 +100,90 @@ class ThinFTP(socketserver.BaseRequestHandler):
 
     def ftp_user(self, uname):
         self.login_user = uname
-        self.response(331, user=uname)
+        return self.response(331, user=uname)
 
     def ftp_pass(self, pswd=''):
         if self.logged_in:
-            self.response(202, 'Already logged in')
+            return self.response(202, 'Already logged in')
         elif not self.login_user:
-            self.response(503, 'Login with USER first')
+            return self.response(503, 'Login with USER first')
         else:
             if (self.login_user == self.server.config.user) and (pswd == self.server.config.pswd):
-                self.response(230)
                 self.logged_in = True
+                return self.response(230)
             else:
                 self.login_user = ''
-                self.response(530)
+                return self.response(530)
 
     def ftp_pwd(self):
-        r = self.response(257, f"{self.fileman.pwd()!r} is the current directory")
-        self.server.lgr.debug(f"Replied: {r!r}")
+        return self.response(257, f'"{self.fileman.pwd()}" is current directory')
 
     def ftp_cwd(self, path):
         try:
             self.fileman.cwd(path)
-            self.response(250, msg=f"Directory changed to {self.fileman.pwd()!r}")
+            return self.response(250, msg=f"Directory changed to {self.fileman.pwd()}")
         except FileNotFoundError:
-            self.response(550, obj_kind="Directory", fname=path)
+            return self.response(550, obj_kind="Directory", fname=path)
         except NotADirectoryError:
-            self.response(550, msg=f"The directory name is invalid: {path!r}")
+            return self.response(550, msg=f"The directory name is invalid: {path!r}")
         except PermissionError as e:
-            self.response(550, msg=e)
             self.server.lgr.error(f"Attempt by client {self.client_addr()} to violate server: {e}")
+            return self.response(550, msg=e)
 
     def ftp_cdup(self):
         try:
             self.fileman.cd_up()
-            self.response(250, msg=f"Directory changed to {self.fileman.pwd()}")
+            return self.response(250, msg=f"Directory changed to {self.fileman.pwd()}")
         except FileNotFoundError:
-            self.response(550, msg="Failed to change directory. Parent directory does not exist")
+            return self.response(550, msg="Failed to change directory. Parent directory does not exist")
         except PermissionError as e:
-            self.response(550, msg=e)
             self.server.lgr.error(f"Attempt by client {self.client_addr()} to violate server: {e}")
+            return self.response(550, msg=e)
 
     def ftp_mkd(self, path):
         try:
             self.fileman.mkdir(path)
-            self.response(257, path=self.fileman.get_abs(path))
+            return self.response(257, path=self.fileman.get_abs(path))
         except FileExistsError:
-            self.response(550, msg=f"{self.fileman.get_abs(path)}: Directory already exists")
+            return self.response(550, msg=f"{self.fileman.get_abs(path)}: Directory already exists")
 
     def ftp_pasv(self):
         self.data_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.data_sock.bind((self.server.config.bind, 0))
         self.data_sock.listen(1)
 
-        ip, port = self.data_sock.getsockname()
+        ip, _ = self.request.getsockname()
+        _, port = self.data_sock.getsockname()
 
         p1 = port // 256
         p2 = port % 256
         self.server.lgr.debug(f"Opened PASV Data connection at {ip}:{port}")
-        self.response(227, host=ip.replace('.',','), p1=p1, p2=p2)
+        return self.response(227, host=ip.replace('.',','), p1=p1, p2=p2)
     
     def ftp_list(self, path='.'):
         if not self.data_sock:
-            self.response(503, 'requires PASV first')
-        else:
-            try:
-                lsts = '\r\n'.join(self.fileman.ls(path))
-                self.open_data_conn()
-                self.response(150)
-                self.server.lgr.debug(f"Sending to client {self.client_addr()} via Data conn: \n" + lsts)
-                self.data_conn.sendall(lsts.encode())
-                self.close_data_conn()
-                self.response(226)
-            except PermissionError as e:
-                self.response(550, msg=e)
-                self.server.lgr.error(f"Attempt by client {self.client_addr()} to violate server: {e}")
+            return self.response(503, 'requires PASV first')
+        try:
+            lsts = '\r\n'.join(self.fileman.ls(path))
+            self.open_data_conn()
+            self.response(150)
+            self.server.lgr.debug(f"Sending to client {self.client_addr()} via Data conn: \n" + lsts)
+            self.data_conn.sendall(lsts.encode())
+            self.close_data_conn()
+            return self.response(226)
+        except PermissionError as e:
+            self.server.lgr.error(f"Attempt by client {self.client_addr()} to violate server: {e}")
+            return self.response(550, msg=e)
 
+    def ftp_opts(self, kind, switch):
+        # TODO: Implement OPTS verb
+        return self.response(200, cmd='OPTS')
+
+    def ftp_type(self, arg):
+        if arg.upper() in ('A', 'I'):
+            self.transfer_type = arg.upper()
+            return self.response(200, cmd='TYPE')
+        return self.response(504, arg=arg)
         
     def ftp_quit(self):
         self.response(221)
