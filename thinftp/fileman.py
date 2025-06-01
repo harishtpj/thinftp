@@ -9,17 +9,22 @@ class FileHandler:
         self.root_dir = Path(root_dir).resolve()
         self.cur_dir = self.root_dir
 
+    def resolve_path(self, path):
+        if path.startswith('/') or path.startswith('\\'):
+            return (self.root_dir / path.lstrip('/\\')).resolve()
+        return (self.cur_dir / path).resolve()
+
     def pwd(self):
         if self.cur_dir == self.root_dir:
             return '/'
         return '/' + self.cur_dir.relative_to(self.root_dir).as_posix()
 
     def get_abs(self, path):
-        new_dir = (self.cur_dir / path).resolve()
+        new_dir = self.resolve_path(path)
         return '/' + new_dir.relative_to(self.root_dir).as_posix()
 
     def cwd(self, path):
-        new_path = (self.cur_dir / path).resolve()
+        new_path = self.resolve_path(path)
         if new_path.exists():
             if new_path.is_dir():
                 if not new_path.is_relative_to(self.root_dir):
@@ -33,17 +38,17 @@ class FileHandler:
     def cd_up(self):
         par_dir = self.cur_dir.parent.resolve()
         if par_dir.exists():
-            if not par_dir.is_relative_to(self.root_dir):
+            if not par_dir.absolute().is_relative_to(self.root_dir):
                 raise PermissionError('Attempt to move behind root directory')
             self.cur_dir = par_dir
         else:
             raise FileNotFoundError
 
     def mkdir(self, path):
-        (self.cur_dir / path).mkdir(parents=True)
+        self.resolve_path(path).mkdir(parents=True)
     
     def ls(self, path):
-        target_dir = (self.cur_dir / path).resolve()
+        target_dir = self.resolve_path(path)
 
         if target_dir.exists():
             if not target_dir.is_relative_to(self.root_dir):
