@@ -1,15 +1,57 @@
-# The main FTP handler code for thinFTP
+
+"""
+The FTP command handler for thinFTP.
+
+This module defines the `ThinFTP` class which handles FTP commands over
+a socket connection. It supports standard FTP commands such as USER, PASS,
+LIST, RETR, STOR, and PASV mode for data transfers.
+
+Author: M.V. Harish Kumar
+"""
+
 import socketserver
 import socket
 from .fileman import FileHandler
 from .errors import *
 
 class ThinFTP(socketserver.BaseRequestHandler):
+    """
+    The main handler class for the thinFTP server.
+    
+    This class implements methods for parsing and responding to FTP protocol
+    commands from a connected client. It uses a PASV data connection model.
+
+    Attributes:
+        fileman (FileHandler): Handles file system operations.
+        login_user (str): Currently logging-in or logged-in user.
+        logged_in (bool): Authentication state of the client.
+        transfer_type (str): Transfer type ('A' for ASCII, 'I' for binary).
+        data_sock (socket.socket): Passive mode server socket.
+        data_conn (socket.socket): Established data connection with client.
+    """
+
     def client_addr(self):
+        """
+        Returns the client's address as a string.
+
+        Returns:
+            str: The client IP and port in the form 'host:port'.
+        """
         host, port = self.client_address
         return f"{host}:{port}"
     
     def response(self, sts_code, msg=None, **kwargs):
+        """
+        Sends an FTP-compliant response message to the client.
+
+        Args:
+            sts_code (int): FTP status code.
+            msg (str, optional): Optional custom message.
+            **kwargs: Format arguments for message templating.
+
+        Returns:
+            str: The full response line sent to the client.
+        """
         resp_map = {
             150: "File status okay; about to open data connection",
             200: "Command {cmd} OK",
@@ -37,6 +79,12 @@ class ThinFTP(socketserver.BaseRequestHandler):
         return resp
     
     def handle(self):
+        """
+        Entry point for handling a single client connection.
+
+        Continuously reads commands, parses them, and dispatches to
+        handler methods. Manages login state and handles QUIT properly.
+        """
         self.server.lgr.info(f"Got connection from {self.client_addr()}")
         self.response(220)
         
@@ -113,10 +161,28 @@ class ThinFTP(socketserver.BaseRequestHandler):
                     
 
     def ftp_user(self, uname):
+        """
+        Handle the USER command.
+
+        Args:
+            uname (str): Username from the client.
+
+        Returns:
+            str: FTP response line.
+        """
         self.login_user = uname
         return self.response(331, user=uname)
 
     def ftp_pass(self, pswd=''):
+        """
+        Handle the PASS command for user login.
+
+        Args:
+            pswd (str): Password from the client.
+
+        Returns:
+            str: FTP response line.
+        """
         if self.logged_in:
             return self.response(202, 'Already logged in')
         elif not self.login_user:
@@ -130,9 +196,24 @@ class ThinFTP(socketserver.BaseRequestHandler):
                 return self.response(530)
 
     def ftp_pwd(self):
+        """
+        Handle the PWD command to print current working directory.
+
+        Returns:
+            str: FTP response line.
+        """
         return self.response(257, f'"{self.fileman.pwd()}" is current directory')
 
     def ftp_cwd(self, path):
+        """
+        Handle the CWD command to change directory.
+
+        Args:
+            path (str): Path to change to.
+
+        Returns:
+            str: FTP response line.
+        """
         try:
             self.fileman.cwd(path)
             return self.response(250, msg=f"Directory changed to {self.fileman.pwd()}")
@@ -145,6 +226,12 @@ class ThinFTP(socketserver.BaseRequestHandler):
             return self.response(550, msg=e)
 
     def ftp_cdup(self):
+        """
+        Handle the CDUP command to change to parent directory.
+
+        Returns:
+            str: FTP response line.
+        """
         try:
             self.fileman.cd_up()
             return self.response(250, msg=f"Directory changed to {self.fileman.pwd()}")
@@ -155,6 +242,15 @@ class ThinFTP(socketserver.BaseRequestHandler):
             return self.response(550, msg=e)
 
     def ftp_mkd(self, path):
+        """
+        Handle the MKD command to make a new directory.
+
+        Args:
+            path (str): Path of directory to create.
+
+        Returns:
+            str: FTP response line.
+        """
         try:
             self.fileman.mkdir(path)
             return self.response(257, path=self.fileman.get_abs(path))
@@ -162,6 +258,12 @@ class ThinFTP(socketserver.BaseRequestHandler):
             return self.response(550, msg=f"{self.fileman.get_abs(path)}: Directory already exists")
 
     def ftp_pasv(self):
+        """
+        Handle the PASV command to initiate passive data connection.
+
+        Returns:
+            str: FTP response line.
+        """
         self.data_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.data_sock.bind((self.server.config.bind, 0))
         self.data_sock.listen(1)
@@ -175,6 +277,15 @@ class ThinFTP(socketserver.BaseRequestHandler):
         return self.response(227, host=ip.replace('.',','), p1=p1, p2=p2)
     
     def ftp_list(self, path='.'):
+        """
+        Handle the LIST command to list files and directories.
+
+        Args:
+            path (str): Path to list. Defaults to '.'.
+
+        Returns:
+            str: FTP response line.
+        """
         if not self.data_sock:
             return self.response(503, cmd='PASV')
         try:
@@ -190,12 +301,30 @@ class ThinFTP(socketserver.BaseRequestHandler):
             return self.response(550, msg=e)
 
     def ftp_type(self, arg):
+        """
+        Handle the TYPE command to set transfer type.
+
+        Args:
+            arg (str): Transfer type (e.g., 'A' or 'I').
+
+        Returns:
+            str: FTP response line.
+        """
         if arg.upper() in ('A', 'I'):
             self.transfer_type = arg.upper()
             return self.response(200, cmd='TYPE')
         return self.response(504, arg=arg)
 
     def ftp_retr(self, fname):
+        """
+        Handle the RETR command to retrieve a file.
+
+        Args:
+            fname (str): File to download.
+
+        Returns:
+            str: FTP response line.
+        """
         if not self.data_sock:
             return self.response(503, cmd='PASV')
         try:
@@ -217,6 +346,15 @@ class ThinFTP(socketserver.BaseRequestHandler):
             return self.response(550, msg=e)
     
     def ftp_stor(self, fname):
+        """
+        Handle the STOR command to upload a file.
+
+        Args:
+            fname (str): File to store.
+
+        Returns:
+            str: FTP response line.
+        """
         if not self.data_sock:
             return self.response(503, cmd='PASV')
         try:
@@ -238,6 +376,15 @@ class ThinFTP(socketserver.BaseRequestHandler):
             return self.response(550, msg=e)
 
     def ftp_size(self, fname):
+        """
+        Handle the SIZE command to get file size.
+
+        Args:
+            fname (str): File to check.
+
+        Returns:
+            str: FTP response line.
+        """
         try:
             size = self.fileman.size(fname)
             return self.response(213, msg=size)
@@ -248,6 +395,15 @@ class ThinFTP(socketserver.BaseRequestHandler):
             return self.response(550, msg=e)
 
     def ftp_dele(self, fname):
+        """
+        Handle the DELE command to delete a file.
+
+        Args:
+            fname (str): File to delete.
+
+        Returns:
+            str: FTP response line.
+        """
         try:
             self.fileman.delete(fname)
             return self.response(250, "File deleted")
@@ -258,6 +414,15 @@ class ThinFTP(socketserver.BaseRequestHandler):
             return self.response(550, msg=e)
     
     def ftp_rmd(self, path):
+        """
+        Handle the RMD command to remove a directory.
+
+        Args:
+            path (str): Directory to remove.
+
+        Returns:
+            str: FTP response line.
+        """
         try:
             self.fileman.rmdir(path)
             return self.response(250, "Directory deleted")
@@ -268,6 +433,15 @@ class ThinFTP(socketserver.BaseRequestHandler):
             return self.response(550, msg=e)
     
     def ftp_rnfr(self, old):
+        """
+        Handle the RNFR command (rename from).
+
+        Args:
+            old (str): Existing file/directory name.
+
+        Returns:
+            str: FTP response line.
+        """
         try:
             self.fileman.rename_from(old)
             return self.response(350, cmd='RNTO')
@@ -278,6 +452,15 @@ class ThinFTP(socketserver.BaseRequestHandler):
             return self.response(550, msg=e)
     
     def ftp_rnto(self, new):
+        """
+        Handle the RNTO command (rename to).
+
+        Args:
+            new (str): New file/directory name.
+
+        Returns:
+            str: FTP response line.
+        """
         if not hasattr(self.fileman, 'ren_old') or not self.fileman.ren_old:
             return self.response(503, cmd='RNFR')
         try:
@@ -290,13 +473,28 @@ class ThinFTP(socketserver.BaseRequestHandler):
             return self.response(550, msg=e)
     
     def ftp_feat(self):
+        """
+        Handle the FEAT command to list supported features.
+
+        Returns:
+            str: FTP response line.
+        """
         features = ('PASV', 'SIZE', 'UTF8')
         self.response(211, custom='Features')
         for feat in features:
             self.request.sendall(f" {feat}\r\n".encode())
-        self.response(211, msg="End")
+        return self.response(211, msg="End")
     
     def ftp_help(self, *args):
+        """
+        Handle the HELP command.
+
+        Args:
+            *args: Optional command to get help for.
+
+        Returns:
+            str: FTP response line.
+        """
         if args:
             cmd = args[0].upper()
             return self.response(214, f"No Detailed help available for {cmd}")
@@ -308,6 +506,15 @@ class ThinFTP(socketserver.BaseRequestHandler):
         return self.response(214, "Help OK")
 
     def ftp_nlst(self, path='.'):
+        """
+        Handle the NLST command to list names only.
+
+        Args:
+            path (str): Path to list. Defaults to '.'.
+
+        Returns:
+            str: FTP response line.
+        """
         if not self.data_sock:
             return self.response(503, cmd='PASV')
         try:
@@ -324,16 +531,31 @@ class ThinFTP(socketserver.BaseRequestHandler):
     
                          
     def ftp_quit(self):
+        """
+        Handle the QUIT command to end the session.
+
+        Returns:
+            None
+
+        Raises:
+            ClientQuit: Raised to break from the main loop.
+        """
         self.response(221)
         raise ClientQuit
 
     def open_data_conn(self):
+        """
+        Accepts the incoming data connection from the client.
+        """
         if self.data_conn:
             self.close_data_conn()
         self.data_conn, addr = self.data_sock.accept()
         self.server.lgr.debug(f"Accepted PASV Data connection from {addr}")
     
     def close_data_conn(self):
+        """
+        Closes the current data connection and socket.
+        """
         if hasattr(self, 'data_sock'):
             self.data_sock.close()
             self.data_sock = None
