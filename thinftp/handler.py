@@ -84,13 +84,14 @@ class ThinFTP(socketserver.BaseRequestHandler):
                         'STOR': self.ftp_stor,
                         'SYST': lambda: self.response(215, 'UNIX Type: L8'),
                         'FEAT': self.ftp_feat,
-                        'HELP': self.ftp_help
+                        'HELP': self.ftp_help,
+                        'NLST': self.ftp_nlst,
                     }
                     before_login = ('USER', 'PASS', 'QUIT')
+                    single_arg_verbs = ('RETR', 'STOR')
 
                     try:
                         verb = verb.upper()
-                        args = args.split()
                         if (not self.logged_in) and (verb not in before_login):
                             self.response(530, 'Access Denied')
                             continue
@@ -99,7 +100,7 @@ class ThinFTP(socketserver.BaseRequestHandler):
                         if not fn:
                             resp = self.response(502, cmd=verb)
                         else:
-                            resp = fn(*args)
+                            resp = fn(args) if verb in single_arg_verbs else fn(*args.split())
                             
                         self.server.lgr.debug(f"Replied {self.client_addr()}: {resp!r}")
                     except TypeError as e:
@@ -305,6 +306,22 @@ class ThinFTP(socketserver.BaseRequestHandler):
         for ln in cmd_ln:
             self.request.sendall(f" {' '.join(ln)}\r\n".encode())
         return self.response(214, "Help OK")
+
+    def ftp_nlst(self, path='.'):
+        if not self.data_sock:
+            return self.response(503, cmd='PASV')
+        try:
+            lsts = '\r\n'.join([x.name for x in self.fileman.name_ls(path)])
+            self.open_data_conn()
+            self.response(150)
+            self.server.lgr.debug(f"Sending to client {self.client_addr()} via Data conn: \n" + lsts)
+            self.data_conn.sendall(lsts.encode())
+            self.close_data_conn()
+            return self.response(226)
+        except PermissionError as e:
+            self.server.lgr.error(f"Attempt by client {self.client_addr()} to violate server: {e}")
+            return self.response(550, msg=e)
+    
                          
     def ftp_quit(self):
         self.response(221)

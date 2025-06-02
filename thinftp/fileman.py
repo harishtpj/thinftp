@@ -47,8 +47,8 @@ class FileHandler:
 
     def mkdir(self, path):
         self.resolve_path(path).mkdir(parents=True)
-    
-    def ls(self, path):
+
+    def name_ls(self, path):
         target_dir = self.resolve_path(path)
 
         if target_dir.exists():
@@ -67,6 +67,10 @@ class FileHandler:
             except FileNotFoundError:
                 continue
         
+        return matches
+    
+    def ls(self, path):
+        matches = self.name_ls(path)
         if not matches:
             return []
         
