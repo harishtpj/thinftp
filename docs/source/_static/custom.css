@@ -1,0 +1,35 @@
+/* Custom styles for thinFTP documentation */
+
+/* Improve code block styling */
+.highlight {
+    border-radius: 4px;
+    margin: 1em 0;
+}
+
+/* Style for the logo text */
+.navbar-brand {
+    font-weight: bold;
+    font-size: 1.2em;
+}
+
+/* Custom colors for the theme */
+:root {
+    --pst-color-primary: #0066cc;
+    --pst-color-secondary: #004080;
+}
+
+/* Hide the left sidebar to remove redundant navigation */
+.bd-sidebar-primary {
+    display: none !important;
+}
+
+/* Adjust main content to use full width when left sidebar is hidden */
+.bd-main .bd-content {
+    margin-left: 0 !important;
+    max-width: none !important;
+}
+
+/* Ensure the main container takes full width */
+.bd-container-fluid {
+    padding-left: 1rem;
+}

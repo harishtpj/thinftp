@@ -7,3 +7,30 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
 dependencies = []
+
+[project.optional-dependencies]
+docs = [
+    "sphinx>=7.0",
+    "pydata-sphinx-theme",
+    "sphinx-autodoc-typehints",
+    "myst-parser",  # For markdown support
+]
+
+[project.urls]
+Documentation = "https://thinftp.readthedocs.io"
+Repository = "https://github.com/harishtpj/thinftp"  # Update with your actual repo URL
+
+[project.scripts]
+thinftp = "main:main"
+
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["main"]
+
+[tool.setuptools.packages.find]
+include = ["thinftp*"]
+exclude = ["sample_dir*"]
