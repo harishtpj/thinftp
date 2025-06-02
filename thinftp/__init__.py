@@ -1,6 +1,6 @@
 """thinFTP - A minimal, lightweight FTP server implementation in Python."""
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __author__ = "M.V. Harish Kumar"
 __email__ = "harishtpj@outlook.com"
 

@@ -333,7 +333,8 @@ class ThinFTP(socketserver.BaseRequestHandler):
             for chunk in self.fileman.read(fname, self.transfer_type):
                 self.data_conn.sendall(chunk)
             try:
-                self.server.lgr.debug("The file ends as follows: \n" + chunk.decode())
+                data = chunk.decode('utf-8', errors='replace')
+                self.server.lgr.debug("The file ends as follows: \n" + data)
             except UnboundLocalError:
                 pass
             self.close_data_conn()
