@@ -1,5 +1,5 @@
 """
-fileman.py - File handling utilities for thinFTP
+File handling utilities for thinFTP
 
 This module defines the `FileHandler` class used by the thinFTP server to 
 manage filesystem operations securely within a defined root directory. It 

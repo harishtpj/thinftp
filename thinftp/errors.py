@@ -4,7 +4,6 @@ Custom exception classes for the thinFTP server.
 These exceptions are used to signal specific error conditions
 during FTP command handling and file operations.
 
-Author: M.V. Harish Kumar
 """
 
 class ClientQuit(Exception):

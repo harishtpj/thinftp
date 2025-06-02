@@ -6,7 +6,6 @@ This module defines the `ThinFTP` class which handles FTP commands over
 a socket connection. It supports standard FTP commands such as USER, PASS,
 LIST, RETR, STOR, and PASV mode for data transfers.
 
-Author: M.V. Harish Kumar
 """
 
 import socketserver
